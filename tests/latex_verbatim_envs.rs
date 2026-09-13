@@ -6510,17 +6510,14 @@ fn listingcont_fixture_does_not_join_following_prose() {
         extras_out.contains("After.\nNext."),
         "configured extra listingcont must not re-tokenize the no-brace form as Delim, got:\n{extras_out}"
     );
-    let extras_name = format_text(
-        "Before. Next.\n\\listingcont\nAfter. Next.\n",
-        &extras_cfg,
-    )
-    .unwrap();
+    let extras_own =
+        format_text("Before. Next.\n\\listingcont\nAfter. Next.\n", &extras_cfg).unwrap();
     assert!(
-        extras_name.contains("\\listingcont\n"),
-        "configured extra listingcont must keep the leftover form, got:\n{extras_name}"
+        extras_own.contains("\\listingcont\n"),
+        "configured extra listingcont must keep the leftover form, got:\n{extras_own}"
     );
     assert!(
-        extras_name.contains("After.\nNext."),
-        "configured extra listingcont leftover form must still split following prose, got:\n{extras_name}"
+        extras_own.contains("After.\nNext."),
+        "configured extra listingcont leftover form must still split following prose, got:\n{extras_own}"
     );
 }
