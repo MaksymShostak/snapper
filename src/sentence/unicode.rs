@@ -230,6 +230,7 @@ pub fn protect_inline_tokens_with(
 /// `\pyth{code}` / `\pyth|code|` /
 /// `\UseVerb[...]{name}` / `\UseVerbatim{name}` /
 /// `\LUseVerbatim{name}` / `\BUseVerbatim{name}` /
+/// `\DefineShortVerb[...]{char}` / `\UndefineShortVerb{char}` /
 /// `\EscVerb|code|` / `\EscVerb{code}` /
 /// `\VerbatimInsertBuffer[...]` / `\VerbatimClearBuffer` /
 /// `\InsertBuffer[...]` / `\IterateBuffer[...]{cmd}` so inner `.!?%` cannot
@@ -275,7 +276,8 @@ fn protect_latex_verbatim(
 /// `\sageinput` / `\inputsc` / `\Scontents` / `\typestored` /
 /// `\getstored` / `\mergesc` / `\meaningsc` / `\foreachsc` /
 /// `\pythontexcustomc` / `\pyth` / `\UseVerb` / `\UseVerbatim` /
-/// `\LUseVerbatim` / `\BUseVerbatim` / `\EscVerb` /
+/// `\LUseVerbatim` / `\BUseVerbatim` / `\DefineShortVerb` /
+/// `\UndefineShortVerb` / `\EscVerb` /
 /// `\VerbatimInsertBuffer` / `\VerbatimClearBuffer` /
 /// `\InsertBuffer` / `\IterateBuffer` / extra-name span
 /// starting at `at`.
@@ -393,7 +395,12 @@ fn protect_latex_verbatim(
 /// `{code}`. Longer names first so `\UseVerbatim` is not `\UseVerb` +
 /// leftover. No brace is not a span for the UseVerb family. An
 /// ASCII-letter next token is not an `\EscVerb` delimiter, so
-/// `\EscVerb After.` is not a span. fvextra leftover buffer cmds
+/// `\EscVerb After.` is not a span. fancyvrb leftover
+/// `\DefineShortVerb` / `\UndefineShortVerb` (GitHub #473):
+/// `\DefineShortVerb` takes optional `[...]` then required `{char}`;
+/// `\UndefineShortVerb` takes required `{char}`. No brace is not a
+/// span. No `*` form (`\FV@Command`). `\UseVerb` / `\Verb` stay their
+/// own leftovers. fvextra leftover buffer cmds
 /// (GitHub #468): `\VerbatimInsertBuffer` / `\InsertBuffer` take
 /// optional `[...]`; `\VerbatimClearBuffer` takes no args;
 /// `\IterateBuffer` takes optional `[...]` then required `{cmd}`.
@@ -641,6 +648,12 @@ pub(crate) fn latex_verb_span_end_with(
             return None;
         }
         (after_bs + "mint".len(), VerbKind::Mint)
+    } else if let Some(name) = fancyvrb_shortverb_leftover_cs_name(tail) {
+        // fancyvrb leftover `\DefineShortVerb` / `\UndefineShortVerb`
+        // (GitHub #473). Optional `[...]` then required `{char}` for
+        // `\DefineShortVerb`; required `{char}` for `\UndefineShortVerb`.
+        // No `*` form. `\UseVerb` / `\Verb` stay their own leftovers.
+        (after_bs + name.len(), VerbKind::Lstinputlisting)
     } else if let Some(name) = fancyvrb_leftover_cs_name(tail) {
         // fancyvrb leftover replay / leftover `\Verb` / fvextra
         // leftover `\EscVerb` (GitHub #457). Longer names first so
@@ -987,9 +1000,10 @@ enum VerbKind {
     /// `\inputsympy` / `\inputsympycon` / `\sageinput` / `\inputsc` /
     /// `\typestored` / `\getstored` / `\mergesc` / `\meaningsc` /
     /// `\foreachsc` / `\ExecuteMetaData` / fancyvrb leftover
-    /// `\UseVerb` / `\UseVerbatim` / `\LUseVerbatim` / `\BUseVerbatim`:
+    /// `\UseVerb` / `\UseVerbatim` / `\LUseVerbatim` / `\BUseVerbatim` /
+    /// `\DefineShortVerb` / `\UndefineShortVerb`:
     /// optional `[...]` then required `{filename}` / `{name}` / `{tag}`
-    /// / `{seq}`.
+    /// / `{seq}` / `{char}`.
     Lstinputlisting,
     /// `\verbatiminput`: required `{filename}` (verbatim.sty leftover).
     Verbatiminput,
@@ -1188,6 +1202,23 @@ pub(crate) fn fancyvrb_leftover_cs_name(tail: &str) -> Option<&'static str> {
             continue;
         };
         if after.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return None;
+        }
+        return Some(name);
+    }
+    None
+}
+
+/// fancyvrb leftover `\DefineShortVerb` / `\UndefineShortVerb`
+/// (GitHub #473). Longer name first so `\UndefineShortVerb` is not
+/// leftover. No `*` form (`\FV@Command` / `#1`). `\UseVerb` / `\Verb`
+/// stay their own leftovers.
+pub(crate) fn fancyvrb_shortverb_leftover_cs_name(tail: &str) -> Option<&'static str> {
+    for name in ["UndefineShortVerb", "DefineShortVerb"] {
+        let Some(after) = tail.strip_prefix(name) else {
+            continue;
+        };
+        if after.starts_with(|c: char| c.is_ascii_alphabetic() || c == '*') {
             return None;
         }
         return Some(name);
@@ -1454,6 +1485,7 @@ fn match_extra_verb_command<'a>(tail: &'a str, extras: &'a [String]) -> Option<&
             || pyth_cs_name(name).is_some_and(|n| n == name.as_str())
             || scontents_leftover_cs_name(name).is_some_and(|n| n == name.as_str())
             || fancyvrb_leftover_cs_name(name).is_some_and(|n| n == name.as_str())
+            || fancyvrb_shortverb_leftover_cs_name(name).is_some_and(|n| n == name.as_str())
             || fvextra_buffer_leftover_cs_name(name).is_some_and(|n| n == name.as_str())
             || name == "listinginput"
             || name == "verbatimtabinput"
@@ -4035,6 +4067,86 @@ mod tests {
             latex_verb_span_end_with(r"\verbatiminput{foo.py}", 0, &[]),
             Some(r"\verbatiminput{foo.py}".len()),
             "verbatimwrite must not steal verbatiminput"
+        );
+    }
+
+    /// Ticket fixture (GitHub #473): fancyvrb leftover
+    /// `\DefineShortVerb{\|}` / `\UndefineShortVerb{\|}` stay one
+    /// leftover command; following `After.` still splits. extras skip
+    /// so a configured extra does not re-tokenize the no-brace form as
+    /// Delim. `\UseVerb` unchanged.
+    #[test]
+    fn latex_defineshortverb_stays_atomic() {
+        let text = r"See \DefineShortVerb{\|} here. After.";
+        let (_, placeholders) = protect_inline_tokens(text);
+        assert!(
+            placeholders.iter().any(|p| p == r"\DefineShortVerb{\|}"),
+            "DefineShortVerb span must be protected, got {placeholders:?}"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb{\|}", 0, &[]),
+            Some(r"\DefineShortVerb{\|}".len())
+        );
+        assert_eq!(
+            split(text),
+            vec![
+                r"See \DefineShortVerb{\|} here.".to_string(),
+                "After.".to_string()
+            ]
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\UndefineShortVerb{\|}", 0, &[]),
+            Some(r"\UndefineShortVerb{\|}".len()),
+            "UndefineShortVerb brace form must stay a span"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb[commandchars=\\\{\}]{\|}", 0, &[]),
+            Some(r"\DefineShortVerb[commandchars=\\\{\}]{\|}".len()),
+            "DefineShortVerb optional then brace must stay a span"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb {\|}", 0, &[]),
+            Some(r"\DefineShortVerb {\|}".len()),
+            "DefineShortVerb may skip space before the char brace"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb After.", 0, &[]),
+            None,
+            "DefineShortVerb without a brace char arg is not a verb span"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb*{\|}", 0, &[]),
+            None,
+            "DefineShortVerb has no star form"
+        );
+        let extras = [
+            "DefineShortVerb".to_string(),
+            "UndefineShortVerb".to_string(),
+        ];
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb After.", 0, &extras),
+            None,
+            "configured extra DefineShortVerb must not re-tokenize the no-brace form as Delim"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\UndefineShortVerb After.", 0, &extras),
+            None,
+            "configured extra UndefineShortVerb must not re-tokenize the no-brace form as Delim"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\DefineShortVerb{\|}", 0, &extras),
+            Some(r"\DefineShortVerb{\|}".len()),
+            "configured extra DefineShortVerb must keep the brace form as leftover"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\UseVerb{foo}", 0, &[]),
+            Some(r"\UseVerb{foo}".len()),
+            "DefineShortVerb must not steal UseVerb"
+        );
+        assert_eq!(
+            latex_verb_span_end_with(r"\Verb|x|", 0, &[]),
+            Some(r"\Verb|x|".len()),
+            "DefineShortVerb must not steal Verb"
         );
     }
 
