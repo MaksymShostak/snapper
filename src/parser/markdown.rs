@@ -292,6 +292,16 @@ fn html_tag_self_closes(after_name: &str) -> bool {
     }
 }
 
+/// HTML void elements. Type-6 leftovers (`hr`, `col`, …) have no closer, so
+/// `<hr>` must end on its opener line the way `<hr/>` already does.
+fn is_html_void_tag(name: &str) -> bool {
+    const VOID: &[&str] = &[
+        "area", "base", "basefont", "br", "col", "embed", "frame", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr",
+    ];
+    VOID.iter().any(|t| name.eq_ignore_ascii_case(t))
+}
+
 /// HTML tag name length at the start of `src` (`[A-Za-z][A-Za-z0-9-]*`).
 fn html_tag_name_len(src: &str) -> usize {
     let mut iter = src.chars();
@@ -336,7 +346,7 @@ fn apply_type6_named_tags(line: &str, tag: &str, nest: &mut i32) -> bool {
         }
         if is_close {
             *nest -= 1;
-        } else if !html_tag_self_closes(after_name) {
+        } else if !html_tag_self_closes(after_name) && !is_html_void_tag(&name_src[..name_len]) {
             *nest += 1;
         }
         if *nest <= 0 {
@@ -5607,6 +5617,80 @@ mod tests {
             "oracle-silent path must match, got:\n{raw_out}"
         );
         assert_eq!(format_text(&raw_out, &raw).unwrap(), raw_out);
+    }
+
+    fn ticket_html_type6_void_fixture() -> &'static str {
+        concat!(
+            "Intro sentence here. Another intro sentence.\n",
+            "<hr>\n",
+            "After html. Next.\n",
+        )
+    }
+
+    #[test]
+    fn html_type6_void_hr_does_not_swallow_next_paragraph() {
+        let regions = MarkdownParser.parse(ticket_html_type6_void_fixture());
+        let hr = regions.iter().find_map(|r| match r {
+            Region::Structure(s) if s.contains("<hr>") => Some(s.as_str()),
+            _ => None,
+        });
+        let hr = hr.expect(&format!("hr block must be Structure, got {regions:?}"));
+        assert!(hr.contains("<hr>"), "{hr}");
+        assert!(
+            !hr.contains("After html"),
+            "void type-6 must end at <hr>, got {hr}"
+        );
+        assert!(
+            regions.iter().any(|r| matches!(
+                r,
+                Region::Prose(p) if p.contains("After html.") && p.contains("Next.")
+            )),
+            "following paragraph must stay Prose: {regions:?}"
+        );
+    }
+
+    #[test]
+    fn html_type6_void_hr_following_prose_still_splits() {
+        use crate::format::Format;
+        use crate::{FormatConfig, format_text};
+
+        let input = ticket_html_type6_void_fixture();
+        let cfg = FormatConfig {
+            format: Format::Markdown,
+            ..Default::default()
+        }
+        .without_safety_backstops();
+        let out = format_text(input, &cfg).unwrap();
+        assert!(
+            out.contains("Intro sentence here.\nAnother intro sentence.\n"),
+            "surrounding prose must still reflow, got:\n{out}"
+        );
+        assert!(
+            out.contains("<hr>\n"),
+            "void type-6 opener must stay raw, got:\n{out}"
+        );
+        assert!(
+            out.contains("After html.\nNext.\n"),
+            "following paragraph must stay Prose and split, got:\n{out}"
+        );
+        assert_eq!(format_text(&out, &cfg).unwrap(), out);
+    }
+
+    #[test]
+    fn html_type6_void_col_and_self_closing_hr_do_not_swallow() {
+        for opener in ["<col>", "<hr/>", "<HR>", "<link rel=\"x\">"] {
+            let input = format!(
+                "Intro sentence here. Another intro sentence.\n{opener}\nAfter html. Next.\n"
+            );
+            let regions = MarkdownParser.parse(&input);
+            assert!(
+                regions.iter().any(|r| matches!(
+                    r,
+                    Region::Prose(p) if p.contains("After html.") && p.contains("Next.")
+                )),
+                "{opener} must not swallow following prose: {regions:?}"
+            );
+        }
     }
 
     /// GitHub #340 / snapper-eyx7: quoted HTML blocks have no lazy
